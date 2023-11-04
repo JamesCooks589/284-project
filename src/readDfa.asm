@@ -12,293 +12,225 @@ section .bss
 section .text
 extern initDfa 
 
-readDfa:
-  ; Open the file for reading.
-  
-  mov eax, 5 ; sys_open system call
-  mov rbx, rdi ; file name
-  mov ecx, 0 ; read only access
-  mov edx, 0777 ; permissions (read, write, and execute for all)
-  int 0x80 ; call kernel
+;James, Carter and Qwinton
 
-  ; Check if the file was opened successfully.
-  cmp eax, -1
-  je error
+readDfa:
+  mov eax, 5 				  ; sys_open
+  mov ecx, 0 				  ; read only access
+  mov rbx, rdi 				; filename
+  mov edx, 0777 			; read, write, execute permissions 
+  int 0x80 				    ; call kernel
+
+  
+  cmp eax, -1				  ; Check successful open
+  je exit
   
   mov [fd], eax
-  xor r9, r9
+
+  xor r9, r9  				;clear registers
   xor r10, r10
   xor r11, r11
-; Read from the file until the end of file is reached.
-read_loop:
 
-  mov eax, 3 ; sys_read system call
-  mov ebx, [fd] ; file descriptor is in the rax register
-  mov ecx, info ; buffer to store the read data
-  mov edx, 1 ; number of bytes to read
-  int 0x80 ; call kernel
+fileReader:
+  mov eax, 3 				  ; sys_read
+  mov ebx, [fd] 			; file descriptor in rax
+  mov ecx, info 			; store read data in buffer
+  mov edx, 1 				  ; # bytes to read
+  int 0x80 				    ; call kernel
 
   mov r8, [info]
-  cmp r8, ','  ; Compare the least significant byte (AL) of eax with ASCII value of comma (',')
-  je read_loop  ; Jump if equal to comma
+  cmp r8, ','  				              ; check for comma
+  je fileReader				              ; Jump if equal to comma
 
-  ; Check if the value in eax is equal to newline ('\n')
-  cmp r8, 10  ; Compare AL with ASCII value of newline ('\n')
-  je second_init  ; Jump if equal to newline
-  ; Check if the end of file was reached.
-  cmp eax, 0
-  je end_of_file
+  cmp r8, 10  				              ; check for newline
+  je fileReader_two_init		        ; Jump if equal to newline
+
+  cmp eax, 0				                ; Check if end of file
+  je end
   
-  ; Print the info.
-  ;mov eax, 4 ; sys_write system call
-  ;mov ebx, 1 ; standard output file descriptor
-  ;mov ecx, info ; buffer containing the read data
-  ;mov edx, 1 ;eax ; number of bytes to print
-  ;int 0x80 ; call kernel
+  cmp r9, 1				                  ; Check if transition was read
+  jz transition				              ; Jump to transition
+
+  cmp r9, 0				                  ; Check if state was read
+  jz state				                  ; Jump to state
+
+  jmp fileReader			              ; Repeat fileReader
+
+fileReader_two_init:
+  mov r11, [rdi + DFA.states]
+  mov al, [rdi + DFA.numStates]		  ; Load # states into rcx
+  movzx rsi, al
+  xor r8, r8
+  xor r9, r9
+
+fileReader_two:
+  xor r8, r8
+  mov eax, 3 				                ; sys_read
+  mov ebx, eax 				              ; file descriptor in rax
+  mov ecx, info 			              ; store read data in buffer
+  mov edx, 1 				                ; # bytes to read
+  int 0x80 				                  ; call kernel
+
+  mov r8, [info]
+  cmp r8, ','  				              ; check for comma
+  je fileReader_two			            ; Jump if equal to comma
+
+  cmp r8, 10  				              ; Compare AL to newline character ('\n')
+  je fileReader_three_init  		    ; Jump if equal to newline
+
+  cmp eax, 0				                ; Check for end of file
+  je end
+
+  sub r8, '0'
+  mov [r11 + State.id], r8		      ; Load id into rdi
+  mov byte [r11 + State.isAccepting], 0	; Load isAccepting into rsi
+
+  add r11, State_size  			        ;id = 4 bytes, isAccepting = 1 byte
   
-  ; Check if r9 is 1, transition has been read
-  cmp r9, 1
-  jz move_transition
+  inc r9				                    ; Increment loop counter
+  
+  cmp r9, rsi				                ; Compare loop counter with # states
+  jl fileReader_two			            ; if rdx < rcx
+  cmp r9, rsi
+  je fileReader_two			            ;else if rdx = rcx
+  jmp exit				                  ;else
 
-  ; Check if r9 is 0, state has been read
-  cmp r9, 0
-  jz move_state  ; Jump to move_data label if r9 is 0
+fileReader_three_init:
+  mov r11, [rdi + DFA.states]
+  mov al, [rdi + DFA.numStates]		  ; Load # states into rcx
+  movzx rsi, al
+  xor r8, r8
+  xor r9, r9
 
-  ; Go back to the beginning of the loop.
-  jmp read_loop
+fileReader_three:
+  xor r8, r8
+  mov eax, 3 				                ; sys_read
+  mov ebx, eax 				              ; file descriptor in rax
+  mov ecx, info 			              ; store read data in buffer
+  mov edx, 1 				                ; # bytes to read
+  int 0x80 				                  ; call kernel
 
-move_state:
-  mov rax, [info]  ; Move the byte from info to AL register
-  mov [states], al      ; Move the value from AL to states ; Move data from info to states if r9 is 0
+  mov r8, [info]
+  cmp r8, ','  				              ; check for comma
+  je fileReader_three			          ; Jump if equal to comma
 
-  inc r9
-  jmp read_loop  
+  cmp r8, 10  				              ; Compare AL with newline character ('\n')
+  je fileReader_four_init  		      ; Jump if equal to newline
 
-move_transition:
-  mov rax, [info]  ; Move the byte from info to AL register
-  mov [transitions], al      ; Move the value from AL to states ; Move data from info to states if r9 is 0
+  cmp eax, 0				                ; Check for end of file
+  je end
+
+  sub r8, '0'
+  jmp accepting_init			          ; Jump to accepting
+  jmp exit				                  ; Jump to exit
+
+fileReader_four_init:
+  mov r11, [rdi + DFA.transitions]
+  mov al, [rdi + DFA.numTransitions]; Load # transitions into rcx
+  movzx rsi, al
+  xor r9, r9				                ; Init loop counter
+  xor r10, r10				              ; Init line counter
+
+fileReader_four:
+  mov eax, 3 				                ; sys_read
+  mov ebx, eax 				              ; file descriptor in rax
+  mov ecx, info 			              ; store read data in buffer
+  mov edx, 1 				                ; # bytes to read
+  int 0x80 				                  ; call kernel
+
+  cmp eax, 0				                ; Check for end of file
+  je end
+
+  mov r8, [info]
+  cmp r8, ','  				              ; check for comma
+  je fileReader_four 			          ; Jump if equal to comma
+
+  cmp r8, 10  				              ; Compare AL with newline character ('\n')
+  je reset_counter  			          ; Jump if equal to newline
+
+  cmp r10, 0				                ; Check if from
+  je origin				                  ; Jump to origin
+  cmp r10, 1				                ; Check if to
+  je destination					          ; Jump to destination
+  cmp r10, 2				                ; Check if symbol
+  je symbol				                  ; Jump to symbol
+
+  jmp exit
+  jmp end
+
+state:
+  mov rax, [info]			              ; Move info byte into AL
+  mov [states], al			            ; Move AL into states
+
+  inc r9				                    ; inc counter
+  jmp fileReader			              ; Repeat fileReader
+
+transition:
+  mov rax, [info]			              ; Move info byte into AL
+  mov [transitions], al			        ; Move AL intoto transitions
 
   movzx rdi, byte [states]  
   movzx rsi, byte [transitions]   
   sub rdi, '0'
   sub rsi, '0'
   call initDfa
-  ; rax holds pointer to dfa struct
-  ; assign it
-  mov rdi, rax
+
+  mov rdi, rax				              ; rax contains dfa pointer
   mov dword [rdi + DFA.startState], 0
-  ;ret
   xor r8, r8
-  jmp read_loop  
+  jmp fileReader
 
-end_of_file:
-  ; Close the file.
-  mov eax, 6         ; sys_close system call
-  mov ebx, [fd]       ; file descriptor is in the edi register
-  int 0x80           ; call kernel
+accepting_init:
+  mov al, [r11 + State.id]
+  cmp rax, r8
+  je accepting			                ; Jump to set
+  
+  add r11, State_size  			        ; id = 4 bytes, isAccepting = 1 byte
+  
+  inc r9				                    ; Increment the loop counter
+  cmp r9, rsi				                ; Compare the loop counter with the number of states
+  jl accepting_init			            ; Jump to accepting
 
+  jmp exit				                  ; Jump to exit
+
+accepting:
+  mov byte [r11 + State.isAccepting], 1
+  jmp fileReader_three_init
+
+origin:
+  sub r8, '0'
+  mov [r11 + Transition.from], r8 	; Load from into rdi
+  inc r10
+  jmp fileReader_four
+
+destination:
+  sub r8, '0'
+  mov [r11 + Transition.to], r8 	  ; Load to into rsi
+  inc r10
+  jmp fileReader_four
+
+symbol:
+  mov al, [info]
+  mov [r11 + Transition.symbol], al	; Load symbol into rdx
+  inc r10
+  jmp fileReader_four
+
+reset_counter:
+  xor r10, r10
+  mov al, Transition_size		        ; Move to the next transition
+  add r11, Transition_size  		    ; 4 bytes for .from + 4 bytes for .to + 1 byte for .symbol)
+  inc r9				                    ; Inc loop counter
+  cmp r9, rsi				                ; Compare rsi to loop counter
+  jl fileReader_four			          ; Jump back if rdx < rcx
+  jmp end
+
+end:
+  mov eax, 6         			          ; sys_close
+  mov ebx, [fd]      			          ; file descriptor in edi
+  int 0x80           			          ; call kernel
   mov rax, rdi
   ret
 
-second_init:
-  mov r11, [rdi + DFA.states]
-
-  ; Load the number of states into rcx (assuming numStates is a member of the DFA structure)
-  mov al, [rdi + DFA.numStates]
-  movzx rsi, al
-  xor r8, r8
-  xor r9, r9
-
-second_loop:
-  xor r8, r8
-  mov eax, 3 ; sys_read system call
-  mov ebx, eax ; file descriptor is in the rax register
-  mov ecx, info ; buffer to store the read data
-  mov edx, 1 ; number of bytes to read
-  int 0x80 ; call kernel
-
-  mov r8, [info]
-  cmp r8, ','  ; Compare the least significant byte (AL) of eax with ASCII value of comma (',')
-  je second_loop  ; Jump if equal to comma
-
-  ; Check if the value in eax is equal to newline ('\n')
-  cmp r8, 10  ; Compare AL with ASCII value of newline ('\n')
-  je third_init  ; Jump if equal to newline
-  ; Check if the end of file was reached.
-  cmp eax, 0
-  je end_of_file
-
-  ; Access the current state using rbx as the base pointer
-  ; Load .id and .isAccepting fields into rdi and rsi respectively
-  sub r8, '0'
-  mov [r11 + State.id], r8
-  mov byte [r11 + State.isAccepting], 0
-  ; Move to the next state by adding the size of State struct to rbx
-  ;mov rax, rdi
-  ;ret
-  add r11, State_size  ; Size of State struct (assuming id is 4 bytes, isAccepting is 1 byte)
-  ; Increment the loop counter
-  inc r9
-  ; Compare the loop counter with the number of states
-  cmp r9, rsi
-  jl second_loop  ; Jump back to the loop if rdx < rcx (not reached the end of the array)
-
-  ; End of the loop
-  ; Print the info.
-  ;mov eax, 4 ; sys_write system call
-  ;mov ebx, 1 ; standard output file descriptor
-  ;mov ecx, info ; buffer containing the read data
-  ;mov edx, 1 ;eax ; number of bytes to print
-  ;int 0x80 ; call kernel
-  cmp r9, rsi
-  je second_loop
-  ; Too many values
-  jmp error
-
-third_init:
-  mov r11, [rdi + DFA.states]
-  ; Load the number of states into rcx (assuming numStates is a member of the DFA structure)
-  mov al, [rdi + DFA.numStates]
-  movzx rsi, al
-  xor r8, r8
-  xor r9, r9
-
-third_loop:
-  xor r8, r8
-  mov eax, 3 ; sys_read system call
-  mov ebx, eax ; file descriptor is in the rax register
-  mov ecx, info ; buffer to store the read data
-  mov edx, 1 ; number of bytes to read
-  int 0x80 ; call kernel
-
-  mov r8, [info]
-  cmp r8, ','  ; Compare the least significant byte (AL) of eax with ASCII value of comma (',')
-  je third_loop  ; Jump if equal to comma
-
-  ; Check if the value in eax is equal to newline ('\n')
-  cmp r8, 10  ; Compare AL with ASCII value of newline ('\n')
-  je fourth_init  ; Jump if equal to newline
-  ; Check if the end of file was reached.
-  cmp eax, 0
-  je end_of_file
-
-  sub r8, '0'
-  jmp init_Accepting
-  ; Print the info.
-  ;mov eax, 4 ; sys_write system call
-  ;mov ebx, 1 ; standard output file descriptor
-  ;mov ecx, info ; buffer containing the read data
-  ;mov edx, 1 ;eax ; number of bytes to print
-  ;int 0x80 ; call kernel
-
-  ; Go back to the beginning of the loop.
-  jmp error
-
-init_Accepting:
- 
-  mov al, [r11 + State.id]
-  cmp rax, r8
-  je set_accepting
-  
-  add r11, State_size  ; Size of State struct (assuming id is 4 bytes, isAccepting is 1 byte)
-  ; Increment the loop counter
-  inc r9
-  ; Compare the loop counter with the number of states
-  cmp r9, rsi
-  jl init_Accepting
-
-  jmp error 
-
-set_accepting:
-  mov byte [r11 + State.isAccepting], 1
-  jmp third_init
-
-fourth_init:
-  mov r11, [rdi + DFA.transitions]
-  ; Load the number of transitions into rcx (assuming numTransitions is a member of the DFA structure)
-  mov al, [rdi + DFA.numTransitions]
-  movzx rsi, al
-  ; Initialize loop counter
-  xor r9, r9  ; rdx will be used as the loop counter for all lines
-  xor r10, r10 ; line counter
-
-fourth_loop:
-  mov eax, 3 ; sys_read system call
-  mov ebx, eax ; file descriptor is in the rax register
-  mov ecx, info ; buffer to store the read data
-  mov edx, 1 ; number of bytes to read
-  int 0x80 ; call kernel
-
-  ;mov eax, 4 ; sys_write system call
-  ;mov ebx, 1 ; standard output file descriptor
-  ;mov ecx, info ; buffer containing the read data
-  ;mov edx, 1 ;eax ; number of bytes to print
-  ;int 0x80 ; call kernel
-
-  cmp eax, 0
-  je end_of_file
-
-  ;jmp fourth_loop
-
-  mov r8, [info]
-  cmp r8, ','  ; Compare the least significant byte (AL) of eax with ASCII value of comma (',')
-  je fourth_loop  ; Jump if equal to comma
-
-  ; Check if the value in eax is equal to newline ('\n')
-  cmp r8, 10  ; Compare AL with ASCII value of newline ('\n')
-  je reset_line_counter  ; Jump if equal to newline
-  ; Check if the end of file was reached.
-  
-  ; Access the current transition using rbx as the base pointer
-  ; Load .from, .to, and .symbol fields into rdi, rsi, and rdx respectively
-
-  cmp r10, 0
-  je set_from
-
-  cmp r10, 1
-  je set_to
-
-  cmp r10, 2
-  je set_symbol
-
-  jmp error
-
-  jmp end_of_file
-; End of the loop
-
-set_from:
-  sub r8, '0'
-  mov [r11 + Transition.from], r8
-  inc r10
-  jmp fourth_loop
-
-set_to:
-  sub r8, '0'
-  mov [r11 + Transition.to], r8
-  inc r10
-  jmp fourth_loop
-
-set_symbol:
-  mov al, [info]
-  mov [r11 + Transition.symbol], al
-  inc r10
-  jmp fourth_loop
-
-reset_line_counter:
-  xor r10, r10
-  ; Move to the next transition by adding the size of Transition struct to rbx
-  mov al, Transition_size
-  add r11, Transition_size  ; Size of Transition struct (4 bytes for .from + 4 bytes for .to + 1 byte for .symbol)
-
-  ; Increment the loop counter
-  inc r9
-
-  cmp r9, rsi
-  jl fourth_loop  ; Jump back to the loop if rdx < rcx (not reached the end of the array)
-
-  jmp end_of_file
-
-error:
-  ; Some error
+exit:
   leave
   ret
